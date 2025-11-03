@@ -1,0 +1,56 @@
+{
+  "name": "warenentnahme-telegram",
+  "version": "0.1.0",
+  "description": "Warenentnahme via Telegram → LLM-Parser → Zielsystem",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest --coverage",
+    "lint": "eslint src tests",
+    "type-check": "tsc --noEmit",
+    "setup-webhook": "tsx scripts/setup-webhook.ts",
+    "delete-webhook": "tsx scripts/delete-webhook.ts",
+    "test-sheets": "tsx scripts/test-sheets.ts",
+    "check-worksheets": "tsx scripts/check-worksheets.ts",
+    "check-webhook": "tsx scripts/check-webhook-status.ts",
+    "cleanup-transaktionen": "tsx scripts/cleanup-transaktionen.ts"
+  },
+  "keywords": [
+    "telegram",
+    "warenentnahme",
+    "llm",
+    "parser"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@hono/node-server": "^1.12.0",
+    "dotenv": "^16.4.5",
+    "googleapis": "^144.0.0",
+    "grammy": "^1.38.3",
+    "hono": "^4.6.6",
+    "openai": "^4.71.1",
+    "pino": "^9.5.0",
+    "pino-pretty": "^11.2.2",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.5",
+    "@typescript-eslint/eslint-plugin": "^8.7.0",
+    "@typescript-eslint/parser": "^8.7.0",
+    "@vitest/coverage-v8": "^2.1.8",
+    "eslint": "^9.15.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
+
