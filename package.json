@@ -25,7 +25,7 @@
     "start-tunnel": "tsx scripts/start-all.ts",
     "watchdog": "tsx scripts/watchdog.ts",
     "auto-setup": "tsx scripts/auto-setup.ts",
-    "start": "bash scripts/start-bot.sh",
+    "start": "node dist/index.js",
     "monitor-voice": "tsx scripts/monitor-voice.ts",
     "status": "tsx scripts/final-status-check.ts"
   },
