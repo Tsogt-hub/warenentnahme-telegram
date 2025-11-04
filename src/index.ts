@@ -25,6 +25,7 @@ const outboundMode = (process.env.OUTBOUND_MODE || "sheets") as
   | "sheets"
   | "trello"
   | "opusflow";
+// Railway setzt PORT automatisch, verwende es oder Default 3000
 const port = Number(process.env.PORT) || 3000;
 
 // Validierung
