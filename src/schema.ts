@@ -28,8 +28,22 @@ export const TelegramUpdateSchema = z.object({
         type: z.enum(["private", "group", "supergroup", "channel"]),
         title: z.string().optional(),
       }),
+      forward_from: z
+        .object({
+          id: z.number(),
+          username: z.string().optional(),
+          first_name: z.string().optional(),
+        })
+        .optional(),
+      forward_from_chat: z
+        .object({
+          id: z.number(),
+          type: z.enum(["private", "group", "supergroup", "channel"]),
+          title: z.string().optional(),
+        })
+        .optional(),
     })
-    .optional(),
+    .passthrough(), // Erlaube zusätzliche Felder (z.B. forward_from)
 });
 
 export type TelegramUpdate = z.infer<typeof TelegramUpdateSchema>;

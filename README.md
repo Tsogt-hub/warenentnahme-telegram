@@ -179,6 +179,72 @@ GOOGLE_SHEETS_ALERT_THRESHOLD=10  # Optional
 GOOGLE_SERVICE_ACCOUNT_KEY=... # Base64, JSON-String oder Dateipfad
 ```
 
+## Features
+
+### ✅ Voice Messages (Sprachnachrichten)
+Der Bot unterstützt vollständig **Sprachnachrichten**:
+- ✅ Automatische Transkription mit OpenAI Whisper
+- ✅ Unterstützung für forwarded messages
+- ✅ Leere Transkriptionen werden erkannt
+- ✅ Detailliertes Logging
+
+Siehe [docs/VOICE_MESSAGES.md](docs/VOICE_MESSAGES.md) für Details.
+
+## Troubleshooting
+
+### Bot reagiert nicht?
+
+**Schnell-Diagnose:**
+```bash
+pnpm diagnose
+```
+
+**Automatischer Quick-Fix:**
+```bash
+pnpm quick-fix
+```
+
+**Manuelle Fixes:**
+- Pending Updates löschen: `pnpm clear-pending`
+- Webhook-Status prüfen: `pnpm check-webhook`
+- Webhook neu setzen: `pnpm setup-webhook <url>`
+
+**Häufige Probleme:**
+- **503 Service Unavailable**: Tunnel läuft nicht → `lt --port 3000 --subdomain warenentnahme-bot`
+- **Pending Updates > 0**: Alte Updates warten → `pnpm clear-pending`
+- **Server nicht erreichbar**: Server läuft nicht → `pnpm dev`
+
+Siehe [docs/BOT_TROUBLESHOOTING.md](docs/BOT_TROUBLESHOOTING.md) für detaillierte Anleitung.
+
+### Verfügbare Scripts
+
+| Script | Beschreibung |
+|--------|--------------|
+| `pnpm diagnose` | Vollständige Diagnose (ENV, Server, Tunnel, Webhook) |
+| `pnpm quick-fix` | Automatischer Fix für häufige Probleme |
+| `pnpm clear-pending` | Löscht pending Telegram Updates |
+| `pnpm check-webhook` | Zeigt Webhook-Status und Fehler |
+| `pnpm setup-webhook <url>` | Setzt Webhook-URL |
+| `pnpm delete-webhook` | Löscht Webhook komplett |
+| `pnpm start-tunnel` | Startet Tunnel automatisch (localtunnel/ngrok) |
+| `pnpm watchdog` | Überwacht System kontinuierlich (alle 30s) |
+| `pnpm auto-setup` | Richtet alles automatisch ein (Setup-Wizard) |
+| `pnpm monitor-voice` | Prüft Voice Message Konfiguration |
+
+## Deployment
+
+Für **dauerhaften Betrieb** (24/7 ohne Laptop):
+
+Siehe [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) für vollständigen Guide.
+
+**Empfohlene Optionen:**
+- 🚀 **Railway** (einfach, kostenloser Start)
+- ☁️ **Render** (kostenloser Tier)
+- 🐳 **Fly.io** (gut für Node.js)
+- 💻 **VPS** (mehr Kontrolle, ab €4/Monat)
+
+**Kosten:** Meist $0-10/Monat
+
 ## TODO
 
 - [ ] Trello-Adapter: Trello API-Integration

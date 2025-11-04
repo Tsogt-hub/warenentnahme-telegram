@@ -10,6 +10,7 @@
 import OpenAI from "openai";
 import type { Logger } from "pino";
 import { Bot } from "grammy";
+import { withRetryAndLog } from "./utils/retry.js";
 
 interface TranscribeConfig {
   openaiApiKey?: string; // OpenAI API Key für Whisper (optional, kann auch in ENV sein)
@@ -82,8 +83,16 @@ export async function transcribeVoiceMessage(
   try {
     logger?.info({ fileId }, "Starte Transkription der Voice Message mit Whisper");
 
-    // 1. Lade Audio-Datei herunter
-    const audioBuffer = await downloadTelegramFile(bot, fileId, logger);
+    // 1. Lade Audio-Datei herunter (mit Retry-Logik)
+    const audioBuffer = await withRetryAndLog(
+      () => downloadTelegramFile(bot, fileId, logger),
+      {
+        maxRetries: 3,
+        initialDelay: 1000,
+        maxDelay: 10000,
+        logger,
+      }
+    );
 
     logger?.debug({ fileSize: audioBuffer.length }, "Audio-Datei heruntergeladen");
 
@@ -92,18 +101,33 @@ export async function transcribeVoiceMessage(
     // Node.js 20+ hat File API verfügbar
     const audioFile = new File([audioBuffer], "voice.ogg", { type: "audio/ogg" });
     
-    // 3. Transkribiere mit Whisper
-    const transcription = await openai.audio.transcriptions.create({
-      file: audioFile,
-      model: "whisper-1",
-      language: "de", // Deutsch
-      response_format: "text",
-    });
+    // 3. Transkribiere mit Whisper (mit Retry-Logik)
+    const transcription = await withRetryAndLog(
+      () =>
+        openai.audio.transcriptions.create({
+          file: audioFile,
+          model: "whisper-1",
+          language: "de", // Deutsch
+          response_format: "text",
+        }),
+      {
+        maxRetries: 3,
+        initialDelay: 2000, // 2 Sekunden für Audio
+        maxDelay: 30000,
+        logger,
+      }
+    );
 
     // Whisper gibt direkt den Text zurück wenn response_format: "text"
-    const transcribedText = typeof transcription === "string" 
+    let transcribedText = typeof transcription === "string" 
       ? transcription.trim()
       : (transcription as any).text?.trim() || String(transcription).trim();
+
+    // Prüfe ob Transkription leer ist
+    if (!transcribedText || transcribedText.length === 0) {
+      logger?.warn({ fileId }, "Transkription ergab leeren Text - möglicherweise stille Audio-Datei");
+      throw new Error("Transkription ergab leeren Text. Bitte versuche es mit einer anderen Sprachnachricht.");
+    }
 
     logger?.info(
       { 

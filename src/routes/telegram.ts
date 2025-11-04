@@ -91,6 +91,8 @@ export function createTelegramRoute(config: TelegramRouteConfig): Hono {
           userId: update.message.from?.id,
           text: update.message.text?.substring(0, 50),
           hasVoice: !!update.message.voice,
+          isForwarded: !!(update.message as any).forward_from || !!(update.message as any).forward_from_chat,
+          forwardFrom: (update.message as any).forward_from?.id || (update.message as any).forward_from_chat?.id,
         },
         "Telegram Update empfangen"
       );
@@ -103,8 +105,6 @@ export function createTelegramRoute(config: TelegramRouteConfig): Hono {
         {
           hasText: !!update.message.text,
           hasVoice: !!update.message.voice,
-          hasAudio: !!update.message.audio,
-          hasDocument: !!update.message.document,
           messageKeys: Object.keys(update.message),
         },
         "Message-Typen Analyse"
@@ -133,17 +133,33 @@ export function createTelegramRoute(config: TelegramRouteConfig): Hono {
             logger: config.logger,
           });
 
+          // Prüfe ob Transkription leer ist
+          if (!text || text.trim().length === 0) {
+            config.logger.warn({ fileId: update.message.voice.file_id }, "Transkription ergab leeren Text");
+            await bot.api.sendMessage(
+              chatId,
+              `❌ Die Sprachnachricht konnte nicht transkribiert werden (leer).\n\nBitte versuche es erneut oder schreibe die Nachricht als Text.`,
+              { reply_to_message_id: messageId }
+            );
+            return c.json({ ok: false, error: "Empty transcription" }, 400);
+          }
+
           config.logger.info(
             { transcribedText: text.substring(0, 100), textLength: text.length },
             "Voice Message erfolgreich transkribiert"
           );
 
-          // Sende Bestätigung an User
-          await bot.api.sendMessage(
-            chatId,
-            `🎤 Sprachnachricht erkannt:\n"${text.substring(0, 200)}${text.length > 200 ? "..." : ""}"\n\nVerarbeite...`,
-            { reply_to_message_id: messageId }
-          );
+          // Sende Zwischennachricht zur Bestätigung der Transkription
+          try {
+            await bot.api.sendMessage(
+              chatId,
+              `🎤 Sprachnachricht transkribiert:\n"${text.substring(0, 150)}${text.length > 150 ? "..." : ""}"\n\n⏳ Verarbeite...`,
+              { reply_to_message_id: messageId }
+            );
+          } catch (msgError) {
+            config.logger.warn({ error: msgError }, "Konnte Zwischennachricht nicht senden");
+            // Weiterlaufen, Verarbeitung ist wichtiger
+          }
         } catch (transcribeError) {
           const errorMsg = transcribeError instanceof Error ? transcribeError.message : String(transcribeError);
           config.logger.error({ error: errorMsg }, "Fehler bei Voice-Transkription");
@@ -156,7 +172,17 @@ export function createTelegramRoute(config: TelegramRouteConfig): Hono {
         }
       } else {
         // Weder Text noch Voice
-        config.logger.debug({ update }, "Keine Text- oder Voice-Nachricht, überspringe");
+        config.logger.warn(
+          {
+            messageId,
+            chatId,
+            messageKeys: Object.keys(update.message),
+            hasVoice: !!update.message.voice,
+            hasText: !!update.message.text,
+            isForwarded: !!(update.message as any).forward_from || !!(update.message as any).forward_from_chat,
+          },
+          "Keine Text- oder Voice-Nachricht erkannt, überspringe"
+        );
         return c.json({ ok: true, message: "No text or voice message" });
       }
 

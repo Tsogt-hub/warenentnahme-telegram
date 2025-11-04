@@ -18,7 +18,16 @@
     "test-sheets": "tsx scripts/test-sheets.ts",
     "check-worksheets": "tsx scripts/check-worksheets.ts",
     "check-webhook": "tsx scripts/check-webhook-status.ts",
-    "cleanup-transaktionen": "tsx scripts/cleanup-transaktionen.ts"
+    "cleanup-transaktionen": "tsx scripts/cleanup-transaktionen.ts",
+    "diagnose": "tsx scripts/diagnose-bot.ts",
+    "clear-pending": "tsx scripts/clear-pending-updates.ts",
+    "quick-fix": "tsx scripts/quick-fix.ts",
+    "start-tunnel": "tsx scripts/start-all.ts",
+    "watchdog": "tsx scripts/watchdog.ts",
+    "auto-setup": "tsx scripts/auto-setup.ts",
+    "start": "bash scripts/start-bot.sh",
+    "monitor-voice": "tsx scripts/monitor-voice.ts",
+    "status": "tsx scripts/final-status-check.ts"
   },
   "keywords": [
     "telegram",

@@ -1,8 +1,9 @@
 # Dependencies
 node_modules/
-.pnpm-store/
+.pnp
+.pnp.js
 
-# Build output
+# Build
 dist/
 *.tsbuildinfo
 
@@ -11,32 +12,35 @@ dist/
 .env.local
 .env.*.local
 
-# Service Account Keys
-service-account-key.json
-*.json.key
-
 # Logs
-logs/
 *.log
 npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 pnpm-debug.log*
+lerna-debug.log*
 
-# Testing
-coverage/
-.nyc_output/
-
-# IDE
-.vscode/
-.idea/
+# OS
+.DS_Store
+*.pid
 *.swp
 *.swo
 *~
 
-# OS
-.DS_Store
-Thumbs.db
+# Service Account Keys
+service-account-key.json
+*.json.key
+
+# IDE
+.vscode/
+.idea/
+*.iml
 
 # Temporary
 tmp/
 temp/
+*.tmp
 
+# Railway/Deployment
+.railway/
+.vercel/
