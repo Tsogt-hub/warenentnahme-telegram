@@ -230,6 +230,19 @@ export function createTelegramRoute(config: TelegramRouteConfig): Hono {
         `Verarbeite ${transactions.length} Transaktion(en)`
       );
 
+      // Bei mehreren Transaktionen: Sende sofort Zwischenstatus
+      if (transactions.length > 1) {
+        try {
+          await bot.api.sendMessage(
+            chatId,
+            `📦 ${transactions.length} Artikel erkannt, verarbeite...`,
+            { reply_to_message_id: messageId }
+          );
+        } catch (_e) {
+          // Ignore, Verarbeitung ist wichtiger
+        }
+      }
+
       // Sammle alle Ergebnisse und Alerts
       const processedResults: Array<{
         success: boolean;
@@ -238,7 +251,7 @@ export function createTelegramRoute(config: TelegramRouteConfig): Hono {
       }> = [];
       const allAlerts: string[] = [];
 
-      // Verarbeite jede Transaktion einzeln
+      // Verarbeite jede Transaktion einzeln (sequentiell wegen Bestandsabhängigkeiten)
       for (let i = 0; i < transactions.length; i++) {
         const transaction = transactions[i];
         const itemRequestId = `${requestId}-${i}`; // Eindeutige Request-ID pro Artikel

@@ -42,6 +42,20 @@ interface InventoryItem {
   gesamtbestand: number; // Spalte I
 }
 
+// Cache für Inventory-Daten (vermeidet wiederholte API-Calls)
+interface InventoryCache {
+  rows: unknown[][];
+  headers: unknown[];
+  headerRowIndex: number;
+  colBezeichnung: number;
+  colInterneNr: number;
+  colExterneNr: number;
+  timestamp: number;
+}
+
+let inventoryCache: InventoryCache | null = null;
+const CACHE_TTL_MS = 60000; // 60 Sekunden Cache-Gültigkeit
+
 /**
  * Erstellt Microsoft Graph Client mit Client Credentials
  */
@@ -203,7 +217,77 @@ Antwort (nur Zahl):`;
 }
 
 /**
- * Liest Lagerbestand aus Excel
+ * Lädt oder gibt gecachte Inventory-Daten zurück
+ */
+async function getInventoryData(
+  client: Client,
+  config: ExcelConfig,
+  logger?: Logger,
+  forceRefresh = false
+): Promise<InventoryCache | null> {
+  const now = Date.now();
+  
+  // Nutze Cache wenn gültig
+  if (!forceRefresh && inventoryCache && (now - inventoryCache.timestamp) < CACHE_TTL_MS) {
+    logger?.debug("Nutze Inventory-Cache");
+    return inventoryCache;
+  }
+
+  const worksheetName = config.inventoryWorksheetName || "Lagerliste";
+  logger?.debug("Lade Inventory-Daten von Excel...");
+  
+  const response = await client
+    .api(`/users/${config.userPrincipalName}/drive/root:${config.filePath}:/workbook/worksheets('${worksheetName}')/usedRange`)
+    .get();
+
+  const rows = response.values || [];
+  if (rows.length < 2) {
+    logger?.warn("Keine Daten im Lagerbestand-Sheet gefunden");
+    return null;
+  }
+
+  // Header finden
+  let headerRowIndex = 0;
+  for (let i = 0; i < Math.min(rows.length, 5); i++) {
+    const row = rows[i];
+    if (row && row.some((cell: string) => 
+      cell && typeof cell === 'string' && 
+      (cell.includes("Bezeichnung") || cell.includes("Bestand") || cell.includes("Artikelnummer") || cell.includes("Lagerplatz"))
+    )) {
+      headerRowIndex = i;
+      break;
+    }
+  }
+
+  const headers = rows[headerRowIndex];
+  
+  const findColumnIndex = (possibleNames: string[]): number => {
+    for (const name of possibleNames) {
+      const index = headers.findIndex((h: string) => 
+        h && typeof h === 'string' && h.toLowerCase().includes(name.toLowerCase())
+      );
+      if (index >= 0) return index;
+    }
+    return -1;
+  };
+
+  // Cache aktualisieren
+  inventoryCache = {
+    rows,
+    headers,
+    headerRowIndex,
+    colBezeichnung: findColumnIndex(["Bezeichnung"]),
+    colInterneNr: findColumnIndex(["Interne", "Artikel-Nr", "Artikelnummer"]),
+    colExterneNr: findColumnIndex(["Externe"]),
+    timestamp: now,
+  };
+
+  logger?.debug({ cacheSize: rows.length }, "Inventory-Cache aktualisiert");
+  return inventoryCache;
+}
+
+/**
+ * Liest Lagerbestand aus Excel (mit Caching)
  */
 async function readInventory(
   client: Client,
@@ -212,59 +296,18 @@ async function readInventory(
   logger?: Logger
 ): Promise<InventoryItem | null> {
   try {
-    const worksheetName = config.inventoryWorksheetName || "Lagerliste";
-    
-    // Lese alle Daten aus dem Worksheet
-    const response = await client
-      .api(`/users/${config.userPrincipalName}/drive/root:${config.filePath}:/workbook/worksheets('${worksheetName}')/usedRange`)
-      .get();
+    // Nutze Cache
+    const cache = await getInventoryData(client, config, logger);
+    if (!cache) return null;
 
-    const rows = response.values || [];
-    if (rows.length < 2) {
-      logger?.warn("Keine Daten im Lagerbestand-Sheet gefunden");
-      return null;
-    }
-
-    // Header ist Zeile 1 (Index 0), Daten beginnen ab Zeile 3 (Index 2)
-    // Spaltenstruktur: A-F=Artikelinfo, G=Bestand Innen, H=Bestand Außen, I=Gesamtbestand
-    let headerRowIndex = 0; // Zeile 1
+    const { rows, colBezeichnung, colInterneNr, colExterneNr } = cache;
     const dataStartRowIndex = 2; // Zeile 3 (0-basiert)
-    
-    // Versuche Header-Zeile zu finden falls anders strukturiert
-    for (let i = 0; i < Math.min(rows.length, 5); i++) {
-      const row = rows[i];
-      if (row && row.some((cell: string) => 
-        cell && typeof cell === 'string' && 
-        (cell.includes("Bezeichnung") || cell.includes("Bestand") || cell.includes("Artikelnummer") || cell.includes("Lagerplatz"))
-      )) {
-        headerRowIndex = i;
-        break;
-      }
-    }
-
-    const headers = rows[headerRowIndex];
-    
-    // Finde Spalten-Indizes
-    const findColumnIndex = (possibleNames: string[]): number => {
-      for (const name of possibleNames) {
-        const index = headers.findIndex((h: string) => 
-          h && typeof h === 'string' && h.toLowerCase().includes(name.toLowerCase())
-        );
-        if (index >= 0) return index;
-      }
-      return -1;
-    };
-
-    const colBezeichnung = findColumnIndex(["Bezeichnung"]);
-    const colInterneNr = findColumnIndex(["Interne", "Artikel-Nr", "Artikelnummer"]);
-    const colExterneNr = findColumnIndex(["Externe"]);
     // Feste Spalten: G=Bestand Innen (Index 6), H=Bestand Außen (Index 7), I=Gesamtbestand (Index 8)
     const colBestandInnen = 6; // Spalte G
     const colBestandAussen = 7; // Spalte H
     const colGesamtbestand = 8; // Spalte I
 
     logger?.debug({
-      headerRowIndex,
       colBezeichnung,
       colInterneNr,
       colBestandInnen,
@@ -272,7 +315,6 @@ async function readInventory(
     }, "Spalten-Mapping gefunden");
 
     // Suche nach Artikel mit Fuzzy-Matching
-    const searchNormalized = normalizeSearchTerm(searchTerm);
     const searchLower = searchTerm.toLowerCase().trim();
     
     let bestMatch: InventoryItem | null = null;
@@ -295,12 +337,12 @@ async function readInventory(
         logger?.info({ found: bezeichnung, row: i + 1, matchType: "exact_sku" }, "Artikel gefunden");
         return {
           rowIndex: i,
-          lagerplatzInnen: row[0] || undefined,
-          lagerplatzAussen: row[1] || undefined,
+          lagerplatzInnen: String(row[0] || "") || undefined,
+          lagerplatzAussen: String(row[1] || "") || undefined,
           interneArtikelnummer: interneNr || undefined,
           externeArtikelnummer: externeNr || undefined,
           bezeichnung: bezeichnung || undefined,
-          hersteller: row[5] || undefined,
+          hersteller: String(row[5] || "") || undefined,
           bestandInnen: Number(row[colBestandInnen] || 0),
           bestandAussen: Number(row[colBestandAussen] || 0),
           gesamtbestand: Number(row[colGesamtbestand] || 0),
@@ -312,12 +354,12 @@ async function readInventory(
         logger?.info({ found: bezeichnung, row: i + 1, matchType: "exact_name" }, "Artikel gefunden");
         return {
           rowIndex: i,
-          lagerplatzInnen: row[0] || undefined,
-          lagerplatzAussen: row[1] || undefined,
+          lagerplatzInnen: String(row[0] || "") || undefined,
+          lagerplatzAussen: String(row[1] || "") || undefined,
           interneArtikelnummer: interneNr || undefined,
           externeArtikelnummer: externeNr || undefined,
           bezeichnung: bezeichnung || undefined,
-          hersteller: row[5] || undefined,
+          hersteller: String(row[5] || "") || undefined,
           bestandInnen: Number(row[colBestandInnen] || 0),
           bestandAussen: Number(row[colBestandAussen] || 0),
           gesamtbestand: Number(row[colGesamtbestand] || 0),
@@ -332,12 +374,12 @@ async function readInventory(
         bestScore = score;
         bestMatch = {
           rowIndex: i,
-          lagerplatzInnen: row[0] || undefined,
-          lagerplatzAussen: row[1] || undefined,
+          lagerplatzInnen: String(row[0] || "") || undefined,
+          lagerplatzAussen: String(row[1] || "") || undefined,
           interneArtikelnummer: interneNr || undefined,
           externeArtikelnummer: externeNr || undefined,
           bezeichnung: bezeichnung || undefined,
-          hersteller: row[5] || undefined,
+          hersteller: String(row[5] || "") || undefined,
           bestandInnen: Number(row[colBestandInnen] || 0),
           bestandAussen: Number(row[colBestandAussen] || 0),
           gesamtbestand: Number(row[colGesamtbestand] || 0),
@@ -391,12 +433,12 @@ async function readInventory(
         
         return {
           rowIndex: aiMatchRowIndex,
-          lagerplatzInnen: row[0] || undefined,
-          lagerplatzAussen: row[1] || undefined,
+          lagerplatzInnen: String(row[0] || "") || undefined,
+          lagerplatzAussen: String(row[1] || "") || undefined,
           interneArtikelnummer: interneNr || undefined,
           externeArtikelnummer: externeNr || undefined,
           bezeichnung: bezeichnung || undefined,
-          hersteller: row[5] || undefined,
+          hersteller: String(row[5] || "") || undefined,
           bestandInnen: Number(row[colBestandInnen] || 0),
           bestandAussen: Number(row[colBestandAussen] || 0),
           gesamtbestand: Number(row[colGesamtbestand] || 0),
@@ -404,7 +446,7 @@ async function readInventory(
       }
     }
 
-    logger?.warn({ searchTerm, searchNormalized }, "Artikel nicht gefunden");
+    logger?.warn({ searchTerm }, "Artikel nicht gefunden");
     return null;
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
