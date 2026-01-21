@@ -24,7 +24,8 @@ const allowedUserIds = process.env.ALLOWED_USER_IDS?.split(",").map(Number) || [
 const outboundMode = (process.env.OUTBOUND_MODE || "sheets") as
   | "sheets"
   | "trello"
-  | "opusflow";
+  | "opusflow"
+  | "excel";
 // Railway setzt PORT automatisch, verwende es oder Default 3000
 const port = Number(process.env.PORT) || 3000;
 

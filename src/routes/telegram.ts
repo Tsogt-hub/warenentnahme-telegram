@@ -8,6 +8,7 @@ import { IdempotencyBus } from "../bus.js";
 import { createSheetsClientFromEnv } from "../adapters/sheets.js";
 import { writeToTrello } from "../adapters/trello.js";
 import { writeToOpusFlow } from "../adapters/opusflow.js";
+import { createExcelClientFromEnv } from "../adapters/excel.js";
 import { transcribeVoiceMessage } from "../transcribe.js";
 import type { Logger } from "pino";
 
@@ -16,19 +17,20 @@ interface TelegramRouteConfig {
   openaiApiKey: string; // Jetzt OpenAI für Parsing UND Whisper
   allowedChatIds: number[];
   allowedUserIds: number[];
-  outboundMode: "sheets" | "trello" | "opusflow";
+  outboundMode: "sheets" | "trello" | "opusflow" | "excel";
   logger: Logger;
 }
 
-// Sheets-Client Cache (einmalig initialisiert)
+// Client Caches (einmalig initialisiert)
 let sheetsClient: Awaited<ReturnType<typeof createSheetsClientFromEnv>> | null = null;
+let excelClient: Awaited<ReturnType<typeof createExcelClientFromEnv>> | null = null;
 
 /**
  * Dispatcher für Outbound-Integration
  */
 async function dispatchToOutbound(
   output: ParserOutput,
-  mode: "sheets" | "trello" | "opusflow",
+  mode: "sheets" | "trello" | "opusflow" | "excel",
   logger: Logger
 ): Promise<{
   success: boolean;
@@ -48,6 +50,16 @@ async function dispatchToOutbound(
         return { success: false, error: "Sheets-Client nicht initialisiert (fehlende ENV-Variablen)" };
       }
       return sheetsClient.write(output);
+    }
+    case "excel": {
+      // Lazy-Load Excel-Client
+      if (!excelClient) {
+        excelClient = await createExcelClientFromEnv(logger);
+      }
+      if (!excelClient) {
+        return { success: false, error: "Excel-Client nicht initialisiert (fehlende ENV-Variablen)" };
+      }
+      return excelClient.write(output);
     }
     case "trello":
       return writeToTrello(output, logger);
