@@ -1,6 +1,7 @@
 import { ClientSecretCredential } from "@azure/identity";
 import { Client } from "@microsoft/microsoft-graph-client";
 import { TokenCredentialAuthenticationProvider } from "@microsoft/microsoft-graph-client/authProviders/azureTokenCredentials/index.js";
+import OpenAI from "openai";
 import type { ParserOutput } from "../schema.js";
 import type { Logger } from "pino";
 
@@ -15,6 +16,8 @@ interface ExcelConfig {
   // Worksheet-Namen
   inventoryWorksheetName?: string; // Default: "Lagerliste"
   transactionsWorksheetName?: string; // Default: "Transaktionen"
+  // OpenAI für intelligente Artikelsuche
+  openaiApiKey?: string;
 }
 
 interface ExcelWriteResult {
@@ -140,6 +143,63 @@ function calculateMatchScore(searchTerm: string, text: string): number {
   }
   
   return matchedWords / searchKeywords.length;
+}
+
+/**
+ * Nutzt OpenAI um den besten Artikel-Match zu finden
+ */
+async function findBestMatchWithAI(
+  searchTerm: string,
+  artikelListe: { bezeichnung: string; rowIndex: number }[],
+  openaiApiKey: string,
+  logger?: Logger
+): Promise<number | null> {
+  try {
+    const openai = new OpenAI({ apiKey: openaiApiKey });
+    
+    // Erstelle kompakte Artikelliste für OpenAI
+    const artikelText = artikelListe
+      .map((a, i) => `${i}: ${a.bezeichnung}`)
+      .join("\n");
+    
+    const prompt = `Du bist ein Lager-Assistent. Der Benutzer sucht nach: "${searchTerm}"
+
+Hier ist die Artikelliste (Index: Bezeichnung):
+${artikelText}
+
+Antworte NUR mit der Index-Nummer des am besten passenden Artikels.
+Beachte:
+- "Schutzleiterklemmen" = "Schutzleiterklemme" (Singular/Plural)
+- "10mm" = "10qmm" = "10mm²" (gleiche Größe)
+- "16mm" = "16qmm" = "16mm²" (gleiche Größe)
+- Ignoriere Zusätze wie "2 Leiter"
+
+Wenn kein passender Artikel existiert, antworte mit: -1
+
+Antwort (nur Zahl):`;
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 10,
+      temperature: 0,
+    });
+
+    const answer = response.choices[0]?.message?.content?.trim() || "-1";
+    const matchIndex = parseInt(answer, 10);
+    
+    logger?.info({ searchTerm, matchIndex, answer }, "OpenAI Artikel-Match");
+    
+    if (isNaN(matchIndex) || matchIndex < 0 || matchIndex >= artikelListe.length) {
+      return null;
+    }
+    
+    return artikelListe[matchIndex].rowIndex;
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    logger?.error({ error: errorMsg }, "OpenAI Artikel-Match fehlgeschlagen");
+    return null;
+  }
 }
 
 /**
@@ -293,6 +353,55 @@ async function readInventory(
         score: bestScore 
       }, "Artikel gefunden (Fuzzy-Match)");
       return bestMatch;
+    }
+
+    // 4. OpenAI-Fallback: Intelligente Artikelsuche
+    if (config.openaiApiKey) {
+      logger?.info({ searchTerm }, "Fuzzy-Match fehlgeschlagen, versuche OpenAI...");
+      
+      // Sammle alle Artikel für OpenAI
+      const artikelListe: { bezeichnung: string; rowIndex: number }[] = [];
+      for (let i = dataStartRowIndex; i < rows.length; i++) {
+        const row = rows[i];
+        if (!row || row.length === 0) continue;
+        const bezeichnung = colBezeichnung >= 0 ? String(row[colBezeichnung] || "").trim() : "";
+        if (bezeichnung) {
+          artikelListe.push({ bezeichnung, rowIndex: i });
+        }
+      }
+      
+      const aiMatchRowIndex = await findBestMatchWithAI(
+        searchTerm, 
+        artikelListe, 
+        config.openaiApiKey, 
+        logger
+      );
+      
+      if (aiMatchRowIndex !== null) {
+        const row = rows[aiMatchRowIndex];
+        const bezeichnung = colBezeichnung >= 0 ? String(row[colBezeichnung] || "").trim() : "";
+        const interneNr = colInterneNr >= 0 ? String(row[colInterneNr] || "").trim() : "";
+        const externeNr = colExterneNr >= 0 ? String(row[colExterneNr] || "").trim() : "";
+        
+        logger?.info({ 
+          found: bezeichnung, 
+          row: aiMatchRowIndex + 1, 
+          matchType: "openai" 
+        }, "Artikel gefunden (OpenAI-Match)");
+        
+        return {
+          rowIndex: aiMatchRowIndex,
+          lagerplatzInnen: row[0] || undefined,
+          lagerplatzAussen: row[1] || undefined,
+          interneArtikelnummer: interneNr || undefined,
+          externeArtikelnummer: externeNr || undefined,
+          bezeichnung: bezeichnung || undefined,
+          hersteller: row[5] || undefined,
+          bestandInnen: Number(row[colBestandInnen] || 0),
+          bestandAussen: Number(row[colBestandAussen] || 0),
+          gesamtbestand: Number(row[colGesamtbestand] || 0),
+        };
+      }
     }
 
     logger?.warn({ searchTerm, searchNormalized }, "Artikel nicht gefunden");
@@ -576,7 +685,12 @@ export async function createExcelClientFromEnv(logger?: Logger): Promise<{
     filePath,
     inventoryWorksheetName: process.env.EXCEL_INVENTORY_WORKSHEET || "Lagerliste",
     transactionsWorksheetName: process.env.EXCEL_TRANSACTIONS_WORKSHEET || "Transaktionen",
+    openaiApiKey: process.env.OPENAI_API_KEY, // Für intelligente Artikelsuche
   };
+  
+  if (config.openaiApiKey) {
+    logger?.info("OpenAI-basierte Artikelsuche aktiviert");
+  }
 
   return {
     write: (output: ParserOutput) => writeToExcel(output, config, logger),
