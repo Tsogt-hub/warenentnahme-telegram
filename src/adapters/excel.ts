@@ -79,6 +79,70 @@ function formatTimestamp(isoString: string): string {
 }
 
 /**
+ * Normalisiert Suchbegriffe für besseres Matching
+ * - Entfernt Plural-Endungen
+ * - Normalisiert Einheiten (mm² → qmm, mm2 → qmm)
+ * - Entfernt Sonderzeichen
+ */
+function normalizeSearchTerm(term: string): string {
+  return term
+    .toLowerCase()
+    .trim()
+    // Einheiten normalisieren
+    .replace(/mm²/g, "qmm")
+    .replace(/mm2/g, "qmm")
+    .replace(/m²/g, "qm")
+    .replace(/m2/g, "qm")
+    // Plural-Endungen entfernen
+    .replace(/klemmen\b/g, "klemme")
+    .replace(/schrauben\b/g, "schraube")
+    .replace(/muttern\b/g, "mutter")
+    .replace(/rollen\b/g, "rolle")
+    .replace(/stücke?\b/g, "stk")
+    // Sonderzeichen entfernen für Matching
+    .replace(/[^\w\däöüß]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Extrahiert relevante Wörter aus einem Text
+ */
+function extractKeywords(text: string): string[] {
+  const normalized = normalizeSearchTerm(text);
+  return normalized.split(" ").filter(w => w.length >= 2);
+}
+
+/**
+ * Berechnet wie gut zwei Texte übereinstimmen (0-1)
+ * Prüft Wort-basiertes Matching
+ */
+function calculateMatchScore(searchTerm: string, text: string): number {
+  const searchKeywords = extractKeywords(searchTerm);
+  const textNormalized = normalizeSearchTerm(text);
+  
+  if (searchKeywords.length === 0) return 0;
+  
+  let matchedWords = 0;
+  for (const keyword of searchKeywords) {
+    // Exakter Wort-Match oder Wort beginnt damit
+    if (textNormalized.includes(keyword)) {
+      matchedWords++;
+    } else {
+      // Prüfe ob Wortanfang passt (min 4 Zeichen)
+      if (keyword.length >= 4) {
+        const prefix = keyword.slice(0, 4);
+        if (textNormalized.includes(prefix)) {
+          matchedWords += 0.5;
+        }
+      }
+    }
+  }
+  
+  return matchedWords / searchKeywords.length;
+}
+
+/**
  * Liest Lagerbestand aus Excel
  */
 async function readInventory(
@@ -147,8 +211,13 @@ async function readInventory(
       colBestandAussen,
     }, "Spalten-Mapping gefunden");
 
-    // Suche nach Artikel (Daten beginnen ab Zeile 3 = Index 2)
+    // Suche nach Artikel mit Fuzzy-Matching
+    const searchNormalized = normalizeSearchTerm(searchTerm);
     const searchLower = searchTerm.toLowerCase().trim();
+    
+    let bestMatch: InventoryItem | null = null;
+    let bestScore = 0;
+    const MATCH_THRESHOLD = 0.5; // Mindestens 50% der Wörter müssen matchen
     
     for (let i = dataStartRowIndex; i < rows.length; i++) {
       const row = rows[i];
@@ -158,17 +227,50 @@ async function readInventory(
       const interneNr = colInterneNr >= 0 ? String(row[colInterneNr] || "").trim() : "";
       const externeNr = colExterneNr >= 0 ? String(row[colExterneNr] || "").trim() : "";
 
-      // Exakter oder Teil-Match
+      // 1. Exakter Match auf Artikelnummer
       if (
-        bezeichnung.toLowerCase() === searchLower ||
         interneNr.toLowerCase() === searchLower ||
-        externeNr.toLowerCase() === searchLower ||
-        bezeichnung.toLowerCase().includes(searchLower) ||
-        searchLower.includes(bezeichnung.toLowerCase())
+        externeNr.toLowerCase() === searchLower
       ) {
-        logger?.info({ found: bezeichnung, row: i + 1 }, "Artikel gefunden");
-        
+        logger?.info({ found: bezeichnung, row: i + 1, matchType: "exact_sku" }, "Artikel gefunden");
         return {
+          rowIndex: i,
+          lagerplatzInnen: row[0] || undefined,
+          lagerplatzAussen: row[1] || undefined,
+          interneArtikelnummer: interneNr || undefined,
+          externeArtikelnummer: externeNr || undefined,
+          bezeichnung: bezeichnung || undefined,
+          hersteller: row[5] || undefined,
+          bestandInnen: Number(row[colBestandInnen] || 0),
+          bestandAussen: Number(row[colBestandAussen] || 0),
+          gesamtbestand: Number(row[colGesamtbestand] || 0),
+        };
+      }
+
+      // 2. Exakter Match auf Bezeichnung
+      if (bezeichnung.toLowerCase() === searchLower) {
+        logger?.info({ found: bezeichnung, row: i + 1, matchType: "exact_name" }, "Artikel gefunden");
+        return {
+          rowIndex: i,
+          lagerplatzInnen: row[0] || undefined,
+          lagerplatzAussen: row[1] || undefined,
+          interneArtikelnummer: interneNr || undefined,
+          externeArtikelnummer: externeNr || undefined,
+          bezeichnung: bezeichnung || undefined,
+          hersteller: row[5] || undefined,
+          bestandInnen: Number(row[colBestandInnen] || 0),
+          bestandAussen: Number(row[colBestandAussen] || 0),
+          gesamtbestand: Number(row[colGesamtbestand] || 0),
+        };
+      }
+
+      // 3. Fuzzy-Match auf Bezeichnung
+      const score = calculateMatchScore(searchTerm, bezeichnung);
+      logger?.debug({ bezeichnung, score, searchTerm }, "Match-Score");
+      
+      if (score > bestScore && score >= MATCH_THRESHOLD) {
+        bestScore = score;
+        bestMatch = {
           rowIndex: i,
           lagerplatzInnen: row[0] || undefined,
           lagerplatzAussen: row[1] || undefined,
@@ -183,7 +285,17 @@ async function readInventory(
       }
     }
 
-    logger?.warn({ searchTerm }, "Artikel nicht gefunden");
+    if (bestMatch) {
+      logger?.info({ 
+        found: bestMatch.bezeichnung, 
+        row: bestMatch.rowIndex + 1, 
+        matchType: "fuzzy", 
+        score: bestScore 
+      }, "Artikel gefunden (Fuzzy-Match)");
+      return bestMatch;
+    }
+
+    logger?.warn({ searchTerm, searchNormalized }, "Artikel nicht gefunden");
     return null;
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);

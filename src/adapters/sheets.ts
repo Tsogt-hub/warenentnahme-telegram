@@ -31,7 +31,7 @@ interface SheetsWriteResult {
 /**
  * Initialisiert Google Sheets API Client
  */
-async function getSheetsClient(serviceAccountKey: string) {
+export async function getSheetsClient(serviceAccountKey: string) {
   let credentials: any;
 
   try {
@@ -74,11 +74,13 @@ async function getSheetsClient(serviceAccountKey: string) {
 
 /**
  * Formatiert Timestamp für Sheets
+ * Verwendet Europe/Berlin Zeitzone (CET/CEST)
  */
 function formatTimestamp(isoString: string): string {
   try {
     const date = new Date(isoString);
     return date.toLocaleString("de-DE", {
+      timeZone: "Europe/Berlin",
       year: "numeric",
       month: "2-digit",
       day: "2-digit",

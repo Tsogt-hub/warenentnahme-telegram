@@ -247,7 +247,7 @@ Gib ausschließlich valides JSON zurück (keine Markdown, kein Text davor/dahint
       let parsed: unknown;
       try {
         parsed = JSON.parse(jsonString);
-      } catch (e) {
+      } catch (_e) {
         throw new Error(`Invalid JSON response: ${jsonString}`);
       }
 

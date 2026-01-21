@@ -1,6 +1,7 @@
 import eslint from "@eslint/js";
 import tseslint from "@typescript-eslint/eslint-plugin";
 import tsparser from "@typescript-eslint/parser";
+import globals from "globals";
 
 export default [
   eslint.configs.recommended,
@@ -12,6 +13,10 @@ export default [
         ecmaVersion: 2022,
         sourceType: "module",
       },
+      globals: {
+        ...globals.node,
+        ...globals.es2022,
+      },
     },
     plugins: {
       "@typescript-eslint": tseslint,
@@ -19,9 +24,10 @@ export default [
     rules: {
       "@typescript-eslint/no-unused-vars": [
         "error",
-        { argsIgnorePattern: "^_" },
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" },
       ],
       "no-console": "off",
+      "no-unused-vars": "off", // TypeScript handles this
     },
   },
   {
