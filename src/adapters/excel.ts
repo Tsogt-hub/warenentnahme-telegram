@@ -581,7 +581,25 @@ export async function writeToExcel(
     let alertMessage = "";
 
     if (output.item_name || output.sku) {
-      const searchTerm = output.item_name || output.sku || "";
+      // Kombiniere item_name mit notes für bessere Suche (z.B. "Schutzleiterklemmen" + "10mm")
+      let searchTerm = output.item_name || output.sku || "";
+      
+      // Wenn notes Größenangaben enthält, füge sie zum Suchterm hinzu
+      if (output.notes) {
+        const sizeMatch = output.notes.match(/(\d+\s*(?:mm|qmm|mm²|cm|m)\b)/i);
+        if (sizeMatch) {
+          searchTerm = `${searchTerm} ${sizeMatch[1]}`.trim();
+        }
+      }
+      
+      // Falls der confirmation_text mehr Details hat, extrahiere Größenangaben
+      if (output.confirmation_text) {
+        const sizeMatch = output.confirmation_text.match(/(\d+\s*(?:mm|qmm|mm²|cm|m)\b)/i);
+        if (sizeMatch && !searchTerm.toLowerCase().includes(sizeMatch[1].toLowerCase())) {
+          searchTerm = `${searchTerm} ${sizeMatch[1]}`.trim();
+        }
+      }
+      
       let quantityChange = 0;
 
       if (output.qty === null || output.qty === undefined) {
