@@ -52,9 +52,15 @@ Beispieleingaben (intelligentes Parsing):
 - "orange tube 50 meter in" → SKU: 2001, quantity: 50, unit: m, type: return, confidence: 0.9
 - "nimm 3x M8-Schrauben aus Regal A3 für Auftrag 1234" → SKU + Menge + Ort, confidence: 0.95
 - "mehrere Kabel entfernt" → item_name: "Kabel", qty: null, confidence: 0.3, needs_clarification: true
+- **"Entnahme aus dem Außenlager 5 Stück Artikelnummer 80012"** → action: "withdraw", sku: "80012", qty: 5, location: "Außenlager", confidence: 0.9
+- **"Artikelnummer 12345 entnommen, 3 Stück"** → action: "withdraw", sku: "12345", qty: 3, confidence: 0.9
 - **"3 Module 4 kabelkanäle 1 leiter 4 M8 Schrauben"** → Array mit 4 Transaktionen:
   [{item: "Module", qty: 3}, {item: "kabelkanäle", qty: 4}, {item: "leiter", qty: 1}, {item: "M8 Schrauben", qty: 4}]
 - **"entnimm 2x Leiter und 5 M8-Schrauben"** → Array mit 2 Transaktionen
+
+WICHTIG für Artikelnummern:
+- "Artikelnummer XXXXX" oder "Art.-Nr. XXXXX" → sku: "XXXXX"
+- Auch wenn nur die Artikelnummer genannt wird (ohne Artikelname), ist das GÜLTIG → item_name kann null sein, aber sku muss gesetzt werden!
 
 Extrahiere Felder:
 action (withdraw|return|adjust|new_item|reject), item_name, sku, qty (null bei unklar), unit, location,
