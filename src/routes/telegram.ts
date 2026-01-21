@@ -203,6 +203,33 @@ export function createTelegramRoute(config: TelegramRouteConfig): Hono {
         return c.json({ ok: false, error: "No text to process" }, 400);
       }
 
+      // Pre-Filter: Ignoriere normale Gespräche (nur Lager-relevante Nachrichten verarbeiten)
+      const lagerKeywords = [
+        // Entnahme
+        "entnimm", "nimm", "genommen", "entnommen", "raus", "entnahme", "minus", "weg",
+        "verbraucht", "verwendet", "abgezogen", "geholt", "picked", "removed", "taken",
+        // Rückgabe
+        "zurück", "rückgabe", "return", "erhalten", "angekommen", "bekommen", "geliefert",
+        "eingegangen", "eingang", "rein", "plus", "received", "arrived",
+        // Inventur
+        "inventur", "bestand", "korrektur", "adjust", "zählung",
+        // Artikel-Bezug
+        "stück", "stk", "meter", "rolle", "kg", "liter", "pack", "karton",
+        // Lager-Bezug
+        "lager", "regal", "kiste", "fach", "innenlager", "außenlager",
+        // Zahlen mit Einheiten (z.B. "3x", "5 stück")
+      ];
+      
+      const textLower = text.toLowerCase();
+      const hasNumber = /\d/.test(text);
+      const hasLagerKeyword = lagerKeywords.some(kw => textLower.includes(kw));
+      
+      // Ignoriere wenn: keine Zahl UND kein Lager-Keyword
+      if (!hasNumber && !hasLagerKeyword) {
+        config.logger.debug({ text: text.substring(0, 50) }, "Keine Lager-relevante Nachricht, ignoriere");
+        return c.json({ ok: true, message: "Not inventory related, ignored" });
+      }
+
       const requestId = `${chatId}-${messageId}`;
 
       // Idempotenz-Check
