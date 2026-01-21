@@ -14,8 +14,7 @@ WICHTIG:
 
 Sicherheit:
 - allowed_chat_ids: [-5025798709]  // Gebharts Lager KI Group
-- allowed_user_ids: [6377811171]   // Tsogt Nandin-Erdene
-- Unbekannt -> authorized=false, action="reject", reason="unauthorized".
+- ALLE Gruppenmitglieder dürfen Transaktionen senden (keine User-Whitelist)
 - Dedupliziere über request_id = chat_id + "-" + message_id; setze duplicate=true bei Wiederholung.
 
 ENTNAHME-TRIGGER (withdraw):
