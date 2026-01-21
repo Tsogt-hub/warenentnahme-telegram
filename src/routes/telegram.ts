@@ -232,12 +232,14 @@ export function createTelegramRoute(config: TelegramRouteConfig): Hono {
 
       const requestId = `${chatId}-${messageId}`;
 
-      // Idempotenz-Check
+      // Idempotenz-Check (SOFORT markieren um Race Conditions zu verhindern)
       if (bus.isDuplicate(requestId)) {
         config.logger.info({ requestId }, "Duplicate request ignored");
-        await bot.api.sendMessage(chatId, "⚠️ Diese Nachricht wurde bereits verarbeitet.");
         return c.json({ ok: true, duplicate: true });
       }
+      
+      // SOFORT als "in Bearbeitung" markieren - verhindert doppelte Verarbeitung
+      bus.markProcessed(requestId, { status: "processing" });
 
       // LLM-Parser (kann einzelnes Objekt oder Array zurückgeben)
       const parsed = await parseWithLLM(

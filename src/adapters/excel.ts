@@ -606,11 +606,11 @@ export async function writeToExcel(
       "Excel adapter: Verarbeite Output"
     );
 
-    // Nur autorisierte und nicht-duplizierte Requests
-    if (!output.authorized || output.duplicate) {
+    // Nur autorisierte und nicht-duplizierte Requests, keine "reject" Aktionen
+    if (!output.authorized || output.duplicate || output.action === "reject") {
       logger?.debug(
-        { authorized: output.authorized, duplicate: output.duplicate },
-        "Excel adapter: Übersprungen"
+        { authorized: output.authorized, duplicate: output.duplicate, action: output.action },
+        "Excel adapter: Übersprungen (nicht autorisiert, Duplikat oder reject)"
       );
       return { success: true };
     }
