@@ -277,7 +277,7 @@ async function readInventory(
     
     let bestMatch: InventoryItem | null = null;
     let bestScore = 0;
-    const MATCH_THRESHOLD = 0.5; // Mindestens 50% der Wörter müssen matchen
+    const MATCH_THRESHOLD = 0.75; // Mindestens 75% Match für Fuzzy, sonst OpenAI-Fallback
     
     for (let i = dataStartRowIndex; i < rows.length; i++) {
       const row = rows[i];
