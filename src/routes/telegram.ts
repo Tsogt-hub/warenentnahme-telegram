@@ -211,6 +211,9 @@ export function createTelegramRoute(config: TelegramRouteConfig): Hono {
         // Rückgabe
         "zurück", "rückgabe", "return", "erhalten", "angekommen", "bekommen", "geliefert",
         "eingegangen", "eingang", "rein", "plus", "received", "arrived",
+        // Umlagerung
+        "umgelagert", "umlagern", "verschieben", "verschoben", "gebracht", "transferiert",
+        "bewegt", "transferred", "moved", "relocated", "vom", "ins",
         // Inventur
         "inventur", "bestand", "korrektur", "adjust", "zählung",
         // Artikel-Bezug

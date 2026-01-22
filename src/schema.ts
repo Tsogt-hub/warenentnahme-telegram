@@ -68,6 +68,7 @@ export const ActionSchema = z.enum([
   "return",
   "adjust",
   "new_item",
+  "transfer", // Umlagerung zwischen Lagerorten
   "reject",
 ]);
 
@@ -77,7 +78,8 @@ export const ParserOutputSchema = z.object({
   sku: z.string().nullable(),
   qty: z.number().min(0).nullable(), // Null erlauben für unklare Mengen
   unit: UnitSchema.nullable().default("Stk"), // Null erlauben, Default "Stk"
-  location: z.string().nullable(),
+  location: z.string().nullable(), // Ziel-Lagerort (bei transfer: Ziel)
+  from_location: z.string().nullable().optional(), // Quell-Lagerort (nur bei transfer)
   project_id: z.string().nullable(),
   project_label: z.string().nullable(),
   reason: z.string().nullable(),

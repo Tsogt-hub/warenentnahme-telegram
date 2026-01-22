@@ -97,6 +97,12 @@ function formatTimestamp(isoString: string): string {
  * Konvertiert Parser-Output zu Sheets-Zeile
  */
 function outputToRow(output: ParserOutput): string[] {
+  // Bei transfer: zeige Quell- und Ziel-Lagerort
+  let locationDisplay = output.location || "";
+  if (output.action === "transfer" && output.from_location) {
+    locationDisplay = `${output.from_location} → ${output.location || "?"}`;
+  }
+
   return [
     formatTimestamp(output.timestamp_iso), // Timestamp
     output.action, // Aktion
@@ -104,7 +110,7 @@ function outputToRow(output: ParserOutput): string[] {
     output.sku || "", // SKU
     output.qty !== null && output.qty !== undefined ? String(output.qty) : "", // Menge (leer wenn null)
     output.unit || "Stk", // Einheit (Default "Stk" wenn null)
-    output.location || "", // Lagerort
+    locationDisplay, // Lagerort (bei transfer: "von → nach")
     output.project_id || "", // Projekt-ID
     output.project_label || "", // Projekt-Label
     output.reason || "", // Grund
@@ -491,6 +497,20 @@ export async function writeToSheets(
         // Bei adjust muss der neue Bestand gesetzt werden (nicht geändert)
         // Für jetzt: als Änderung behandeln
         quantityChange = output.qty - 0; // TODO: Aktuellen Bestand lesen und Differenz berechnen
+      } else if (output.action === "transfer") {
+        // Umlagerung: Gesamtbestand ändert sich NICHT (nur Lagerort wechselt)
+        // Die Transaktion wird protokolliert, aber kein Bestandsupdate
+        logger?.info(
+          {
+            action: "transfer",
+            from: output.from_location,
+            to: output.location,
+            qty: output.qty,
+            item: output.item_name || output.sku,
+          },
+          "Umlagerung protokolliert (Gesamtbestand unverändert)"
+        );
+        quantityChange = 0;
       }
 
       if (quantityChange !== 0) {

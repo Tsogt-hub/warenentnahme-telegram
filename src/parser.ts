@@ -27,6 +27,11 @@ Deutsch: zurück, rückgabe, erhalten, angekommen, bekommen, gekauft, eingehend,
 English: received, arrived, got, purchased, incoming, delivered, in, came in, got in, received
 Symbole: +, plus
 
+UMLAGERUNG-TRIGGER (transfer):
+Deutsch: umgelagert, umlagern, verschieben, verschoben, gebracht von...nach, vom...ins, von...nach, transferiert, bewegt
+English: transferred, moved, relocated, moved from...to
+Pattern: "von [Ort A] nach/ins/zu [Ort B]" → transfer mit from_location=[Ort A], location=[Ort B]
+
 MENGE-FORMATE (alle erkennen):
 "x5", "5x", "5 pcs", "5pcs", "5 kg", "5kg", "5m", "5 meter", "fünf", "5", "a5", "à5", "ca. 5", "~5"
 Unklar ("mehrere", "some", "ein paar") -> qty: null, confidence: 0.3, needs_clarification: true
@@ -57,13 +62,16 @@ Beispieleingaben (intelligentes Parsing):
 - **"3 Module 4 kabelkanäle 1 leiter 4 M8 Schrauben"** → Array mit 4 Transaktionen:
   [{item: "Module", qty: 3}, {item: "kabelkanäle", qty: 4}, {item: "leiter", qty: 1}, {item: "M8 Schrauben", qty: 4}]
 - **"entnimm 2x Leiter und 5 M8-Schrauben"** → Array mit 2 Transaktionen
+- **"Ich habe 15 Stück von der Artikelnummer 70001 vom Außenlager ins Innenlager gebracht"** → action: "transfer", sku: "70001", qty: 15, from_location: "Außenlager", location: "Innenlager"
+- **"5 Kabelrollen von Lager A nach Lager B umgelagert"** → action: "transfer", qty: 5, from_location: "Lager A", location: "Lager B"
 
 WICHTIG für Artikelnummern:
 - "Artikelnummer XXXXX" oder "Art.-Nr. XXXXX" → sku: "XXXXX"
 - Auch wenn nur die Artikelnummer genannt wird (ohne Artikelname), ist das GÜLTIG → item_name kann null sein, aber sku muss gesetzt werden!
 
 Extrahiere Felder:
-action (withdraw|return|adjust|new_item|reject), item_name, sku, qty (null bei unklar), unit, location,
+action (withdraw|return|adjust|new_item|transfer|reject), item_name, sku, qty (null bei unklar), unit, 
+location (Ziel-Lagerort), from_location (Quell-Lagerort, NUR bei transfer!),
 project_id, project_label, reason, person, notes, authorized, duplicate,
 chat_id, message_id, telegram_user_id, telegram_username, request_id, timestamp_iso,
 confidence (0.0-1.0), needs_clarification (bool), clarifying_question, confirmation_text (DE kurz).
@@ -82,6 +90,7 @@ PARSING-REGELN (WICHTIG FÜR BENUTZERFREUNDLICHKEIT):
    withdraw: "✓ Entnahme: {qty} {unit} {item_name}" (+ " (SKU {sku})" nur wenn sku vorhanden) (+ " aus {location}" nur wenn location vorhanden)
    return: "✓ Eingang: {qty} {unit} {item_name}" (+ " → {location}" nur wenn location vorhanden)
    adjust: "✓ Inventur: {item_name} → {qty} {unit}"
+   transfer: "✓ Umlagerung: {qty} {unit} {item_name} (SKU {sku}): {from_location} → {location}"
 7) ALWAYS nur valides JSON nach Schema ausgeben, nichts anderes!
 
 JSON-Schema (WICHTIG: Bei mehreren Artikeln gib ein Array zurück!):
@@ -90,12 +99,13 @@ Wenn MEHRERE Artikel: Array von Objekten, z.B. [{...}, {...}, {...}]
 
 Einzelnes Objekt (oder Array-Element):
 {
-  "action": "withdraw|return|adjust|new_item|reject",
+  "action": "withdraw|return|adjust|new_item|transfer|reject",
   "item_name": "string|null",
   "sku": "string|null",
   "qty": 0 (oder null wenn unklar),
   "unit": "Stk|m|kg|l|pack|set|rolle|karton|kiste|tüte|%" (NIEMALS null - verwende "Stk" als Default wenn unklar),
   "location": "string|null",
+  "from_location": "string|null" (NUR bei transfer: Quell-Lagerort),
   "project_id": "string|null",
   "project_label": "string|null",
   "reason": "string|null",
