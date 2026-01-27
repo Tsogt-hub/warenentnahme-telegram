@@ -315,12 +315,16 @@ async function readInventory(
     logger?.debug({
       colBezeichnung,
       colInterneNr,
+      colExterneNr,
       colBestandInnen,
       colBestandAussen,
-    }, "Spalten-Mapping gefunden");
+      searchTerm,
+    }, "Spalten-Mapping und Suchbegriff");
 
     // Suche nach Artikel mit Fuzzy-Matching
     const searchLower = searchTerm.toLowerCase().trim();
+    // Auch ohne Leerzeichen/Bindestriche vergleichen für besseres Matching
+    const searchNormalized = searchLower.replace(/[\s\-_\.]/g, "");
     
     let bestMatch: InventoryItem | null = null;
     let bestScore = 0;
@@ -333,13 +337,39 @@ async function readInventory(
       const bezeichnung = colBezeichnung >= 0 ? String(row[colBezeichnung] || "").trim() : "";
       const interneNr = colInterneNr >= 0 ? String(row[colInterneNr] || "").trim() : "";
       const externeNr = colExterneNr >= 0 ? String(row[colExterneNr] || "").trim() : "";
+      
+      // Normalisierte Versionen für Matching
+      const interneNrNorm = interneNr.toLowerCase().replace(/[\s\-_\.]/g, "");
+      const externeNrNorm = externeNr.toLowerCase().replace(/[\s\-_\.]/g, "");
 
-      // 1. Exakter Match auf Artikelnummer
+      // 1. Exakter Match auf Artikelnummer (inkl. normalisiert)
       if (
         interneNr.toLowerCase() === searchLower ||
-        externeNr.toLowerCase() === searchLower
+        externeNr.toLowerCase() === searchLower ||
+        interneNrNorm === searchNormalized ||
+        externeNrNorm === searchNormalized
       ) {
-        logger?.info({ found: bezeichnung, row: i + 1, matchType: "exact_sku" }, "Artikel gefunden");
+        logger?.info({ found: bezeichnung, interneNr, externeNr, row: i + 1, matchType: "exact_sku" }, "Artikel gefunden (exakte Artikelnummer)");
+        return {
+          rowIndex: i,
+          lagerplatzInnen: String(row[0] || "") || undefined,
+          lagerplatzAussen: String(row[1] || "") || undefined,
+          interneArtikelnummer: interneNr || undefined,
+          externeArtikelnummer: externeNr || undefined,
+          bezeichnung: bezeichnung || undefined,
+          hersteller: String(row[5] || "") || undefined,
+          bestandInnen: Number(row[colBestandInnen] || 0),
+          bestandAussen: Number(row[colBestandAussen] || 0),
+          gesamtbestand: Number(row[colGesamtbestand] || 0),
+        };
+      }
+      
+      // 2. Teilstring-Match auf Artikelnummer (z.B. "WKD019ML" enthält "WKD 019ML")
+      if (
+        (interneNrNorm && (interneNrNorm.includes(searchNormalized) || searchNormalized.includes(interneNrNorm))) ||
+        (externeNrNorm && (externeNrNorm.includes(searchNormalized) || searchNormalized.includes(externeNrNorm)))
+      ) {
+        logger?.info({ found: bezeichnung, interneNr, externeNr, row: i + 1, matchType: "partial_sku" }, "Artikel gefunden (Teilstring Artikelnummer)");
         return {
           rowIndex: i,
           lagerplatzInnen: String(row[0] || "") || undefined,
@@ -354,9 +384,9 @@ async function readInventory(
         };
       }
 
-      // 2. Exakter Match auf Bezeichnung
+      // 3. Exakter Match auf Bezeichnung
       if (bezeichnung.toLowerCase() === searchLower) {
-        logger?.info({ found: bezeichnung, row: i + 1, matchType: "exact_name" }, "Artikel gefunden");
+        logger?.info({ found: bezeichnung, row: i + 1, matchType: "exact_name" }, "Artikel gefunden (exakte Bezeichnung)");
         return {
           rowIndex: i,
           lagerplatzInnen: String(row[0] || "") || undefined,
@@ -371,7 +401,7 @@ async function readInventory(
         };
       }
 
-      // 3. Fuzzy-Match auf Bezeichnung
+      // 4. Fuzzy-Match auf Bezeichnung
       const score = calculateMatchScore(searchTerm, bezeichnung);
       logger?.debug({ bezeichnung, score, searchTerm }, "Match-Score");
       
@@ -402,7 +432,7 @@ async function readInventory(
       return bestMatch;
     }
 
-    // 4. OpenAI-Fallback: Intelligente Artikelsuche
+    // 5. OpenAI-Fallback: Intelligente Artikelsuche
     if (config.openaiApiKey) {
       logger?.info({ searchTerm }, "Fuzzy-Match fehlgeschlagen, versuche OpenAI...");
       
