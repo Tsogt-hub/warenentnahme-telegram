@@ -164,28 +164,33 @@ function calculateMatchScore(searchTerm: string, text: string): number {
  */
 async function findBestMatchWithAI(
   searchTerm: string,
-  artikelListe: { bezeichnung: string; rowIndex: number }[],
+  artikelListe: { bezeichnung: string; interneNr?: string; externeNr?: string; rowIndex: number }[],
   openaiApiKey: string,
   logger?: Logger
 ): Promise<number | null> {
   try {
     const openai = new OpenAI({ apiKey: openaiApiKey });
     
-    // Erstelle kompakte Artikelliste für OpenAI
+    // Erstelle kompakte Artikelliste für OpenAI (mit Artikelnummern)
     const artikelText = artikelListe
-      .map((a, i) => `${i}: ${a.bezeichnung}`)
+      .map((a, i) => {
+        let entry = `${i}: ${a.bezeichnung}`;
+        if (a.interneNr) entry += ` [Intern: ${a.interneNr}]`;
+        if (a.externeNr) entry += ` [Extern: ${a.externeNr}]`;
+        return entry;
+      })
       .join("\n");
     
     const prompt = `Du bist ein Lager-Assistent. Der Benutzer sucht nach: "${searchTerm}"
 
-Hier ist die Artikelliste (Index: Bezeichnung):
+Hier ist die Artikelliste (Index: Bezeichnung [Artikelnummern]):
 ${artikelText}
 
 Antworte NUR mit der Index-Nummer des am besten passenden Artikels.
 Beachte:
+- Suche AUCH nach Artikelnummern (Intern/Extern)! "WKD 019ML" = Externe Artikelnummer
 - "Schutzleiterklemmen" = "Schutzleiterklemme" (Singular/Plural)
 - "10mm" = "10qmm" = "10mm²" (gleiche Größe)
-- "16mm" = "16qmm" = "16mm²" (gleiche Größe)
 - Ignoriere Zusätze wie "2 Leiter"
 
 Wenn kein passender Artikel existiert, antworte mit: -1
@@ -276,9 +281,9 @@ async function getInventoryData(
     rows,
     headers,
     headerRowIndex,
-    colBezeichnung: findColumnIndex(["Bezeichnung"]),
-    colInterneNr: findColumnIndex(["Interne", "Artikel-Nr", "Artikelnummer"]),
-    colExterneNr: findColumnIndex(["Externe"]),
+    colBezeichnung: findColumnIndex(["Bezeichnung", "Artikelbezeichnung", "Name"]),
+    colInterneNr: findColumnIndex(["Interne", "Interne Artikel", "Artikel-Nr", "Artikelnummer", "Art-Nr"]),
+    colExterneNr: findColumnIndex(["Externe", "Externe Artikel", "Lieferanten", "Hersteller-Nr", "Hersteller Artikel", "Fremd"]),
     timestamp: now,
   };
 
@@ -401,14 +406,21 @@ async function readInventory(
     if (config.openaiApiKey) {
       logger?.info({ searchTerm }, "Fuzzy-Match fehlgeschlagen, versuche OpenAI...");
       
-      // Sammle alle Artikel für OpenAI
-      const artikelListe: { bezeichnung: string; rowIndex: number }[] = [];
+      // Sammle alle Artikel für OpenAI (inkl. Artikelnummern)
+      const artikelListe: { bezeichnung: string; interneNr?: string; externeNr?: string; rowIndex: number }[] = [];
       for (let i = dataStartRowIndex; i < rows.length; i++) {
         const row = rows[i];
         if (!row || row.length === 0) continue;
         const bezeichnung = colBezeichnung >= 0 ? String(row[colBezeichnung] || "").trim() : "";
-        if (bezeichnung) {
-          artikelListe.push({ bezeichnung, rowIndex: i });
+        const interneNr = colInterneNr >= 0 ? String(row[colInterneNr] || "").trim() : "";
+        const externeNr = colExterneNr >= 0 ? String(row[colExterneNr] || "").trim() : "";
+        if (bezeichnung || interneNr || externeNr) {
+          artikelListe.push({ 
+            bezeichnung, 
+            interneNr: interneNr || undefined, 
+            externeNr: externeNr || undefined, 
+            rowIndex: i 
+          });
         }
       }
       
@@ -623,8 +635,18 @@ export async function writeToExcel(
     let alertMessage = "";
 
     if (output.item_name || output.sku) {
-      // Kombiniere item_name mit notes für bessere Suche (z.B. "Schutzleiterklemmen" + "10mm")
+      // Priorisiere SKU für Artikelnummer-Suche (intern oder extern)
+      // Wenn SKU vorhanden und nach Artikelnummer-Muster aussieht, nutze SKU als primären Suchterm
       let searchTerm = output.item_name || output.sku || "";
+      
+      // Wenn SKU vorhanden ist und wie eine Artikelnummer aussieht, nutze sie primär
+      if (output.sku) {
+        const skuLooksLikeArticleNumber = /^[A-Z0-9\-_]+$/i.test(output.sku.trim());
+        if (skuLooksLikeArticleNumber) {
+          searchTerm = output.sku; // Nutze SKU als primären Suchbegriff
+          logger?.info({ sku: output.sku }, "Nutze SKU als primären Suchbegriff (vermutlich Artikelnummer)");
+        }
+      }
       
       // Wenn notes Größenangaben enthält, füge sie zum Suchterm hinzu
       if (output.notes) {
