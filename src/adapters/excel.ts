@@ -16,6 +16,7 @@ interface ExcelConfig {
   // Worksheet-Namen
   inventoryWorksheetName?: string; // Default: "Lagerliste"
   transactionsWorksheetName?: string; // Default: "Transaktionen"
+  alertsWorksheetName?: string; // Default: "Bestandswarnungen"
   // OpenAI für intelligente Artikelsuche
   openaiApiKey?: string;
 }
@@ -627,6 +628,135 @@ async function writeTransaction(
 }
 
 /**
+ * Schreibt Bestandswarnung in Excel (separater Tab)
+ * - Prüft ob Artikel bereits in der Liste ist (verhindert Duplikate)
+ * - Erstellt Header falls Tab neu ist
+ */
+async function writeStockAlert(
+  client: Client,
+  config: ExcelConfig,
+  articleInfo: {
+    bezeichnung?: string;
+    sku?: string;
+    externeNr?: string;
+    currentStock: number;
+    alertThreshold: number;
+    location?: string;
+  },
+  logger?: Logger
+): Promise<boolean> {
+  try {
+    const worksheetName = config.alertsWorksheetName || "Bestandswarnungen";
+    
+    logger?.info({ worksheetName, article: articleInfo.bezeichnung || articleInfo.sku }, "Schreibe Bestandswarnung");
+
+    // Prüfe ob Worksheet existiert, erstelle Header falls nötig
+    let existingRows: unknown[][] = [];
+    let hasHeader = false;
+    
+    try {
+      const usedRange = await client
+        .api(`/users/${config.userPrincipalName}/drive/root:${config.filePath}:/workbook/worksheets('${worksheetName}')/usedRange`)
+        .get();
+      existingRows = usedRange.values || [];
+      hasHeader = existingRows.length > 0;
+    } catch {
+      // Worksheet existiert nicht oder ist leer
+      logger?.info("Bestandswarnungen-Sheet leer oder nicht vorhanden, erstelle Header");
+    }
+
+    // Header-Zeile
+    const headerRow = [
+      "Zeitstempel",
+      "Artikel",
+      "SKU (Intern)",
+      "SKU (Extern)",
+      "Aktueller Bestand",
+      "Meldebestand",
+      "Differenz",
+      "Status",
+      "Lagerort",
+    ];
+
+    // Erstelle Header falls nicht vorhanden
+    if (!hasHeader) {
+      await client
+        .api(`/users/${config.userPrincipalName}/drive/root:${config.filePath}:/workbook/worksheets('${worksheetName}')/range(address='A1:I1')`)
+        .patch({
+          values: [headerRow],
+        });
+      logger?.info("Bestandswarnungen: Header erstellt");
+      existingRows = [headerRow];
+    }
+
+    // Prüfe ob Artikel bereits in der Liste ist (Status "Offen" oder "⚠️ Offen")
+    const searchTerm = (articleInfo.bezeichnung || articleInfo.sku || "").toLowerCase();
+    const skuSearch = (articleInfo.sku || "").toLowerCase();
+    const externeSearch = (articleInfo.externeNr || "").toLowerCase();
+    
+    for (let i = 1; i < existingRows.length; i++) {
+      const row = existingRows[i];
+      if (!row) continue;
+      
+      const rowArtikel = String(row[1] || "").toLowerCase();
+      const rowSkuIntern = String(row[2] || "").toLowerCase();
+      const rowSkuExtern = String(row[3] || "").toLowerCase();
+      const rowStatus = String(row[7] || "").toLowerCase();
+      
+      // Prüfe ob bereits vorhanden UND noch offen
+      const isMatch = 
+        (searchTerm && rowArtikel.includes(searchTerm)) ||
+        (skuSearch && rowSkuIntern === skuSearch) ||
+        (externeSearch && rowSkuExtern === externeSearch);
+      
+      const isOpen = rowStatus.includes("offen") || rowStatus === "";
+      
+      if (isMatch && isOpen) {
+        logger?.info({ article: articleInfo.bezeichnung, row: i + 1 }, "Artikel bereits in Bestandswarnungen (offen)");
+        
+        // Aktualisiere den aktuellen Bestand in der bestehenden Zeile
+        const differenz = articleInfo.currentStock - articleInfo.alertThreshold;
+        await client
+          .api(`/users/${config.userPrincipalName}/drive/root:${config.filePath}:/workbook/worksheets('${worksheetName}')/range(address='E${i + 1}:G${i + 1}')`)
+          .patch({
+            values: [[articleInfo.currentStock, articleInfo.alertThreshold, differenz]],
+          });
+        
+        return true; // Bereits vorhanden, nur aktualisiert
+      }
+    }
+
+    // Neue Warnung eintragen
+    const differenz = articleInfo.currentStock - articleInfo.alertThreshold;
+    const newRow = [
+      formatTimestamp(new Date().toISOString()),
+      articleInfo.bezeichnung || "",
+      articleInfo.sku || "",
+      articleInfo.externeNr || "",
+      articleInfo.currentStock,
+      articleInfo.alertThreshold,
+      differenz,
+      "⚠️ Offen",
+      articleInfo.location || "",
+    ];
+
+    const nextRow = existingRows.length + 1;
+    await client
+      .api(`/users/${config.userPrincipalName}/drive/root:${config.filePath}:/workbook/worksheets('${worksheetName}')/range(address='A${nextRow}:I${nextRow}')`)
+      .patch({
+        values: [newRow],
+      });
+
+    logger?.info({ article: articleInfo.bezeichnung, row: nextRow }, "Bestandswarnung hinzugefügt");
+    return true;
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    logger?.error({ error: errorMsg }, "Fehler beim Schreiben der Bestandswarnung");
+    return false;
+  }
+}
+
+/**
  * Hauptfunktion: Schreibt Lagerbewegung in Excel
  */
 export async function writeToExcel(
@@ -734,6 +864,24 @@ export async function writeToExcel(
           alertNeeded = true;
           alertMessage = `⚠️ Niedriger Bestand: ${output.item_name || output.sku} - ${inventoryUpdateResult.newStock} ${output.unit} (Meldebestand: ${alertThreshold})`;
           logger?.warn({ item: output.item_name, stock: inventoryUpdateResult.newStock }, "Meldebestand unterschritten");
+          
+          // Bestandswarnung in separaten Tab schreiben
+          try {
+            // Hole Artikel-Details für die Warnung
+            const articleDetails = await readInventory(client, config, searchTerm, logger);
+            
+            await writeStockAlert(client, config, {
+              bezeichnung: articleDetails?.bezeichnung || output.item_name || undefined,
+              sku: articleDetails?.interneArtikelnummer || output.sku || undefined,
+              externeNr: articleDetails?.externeArtikelnummer || undefined,
+              currentStock: inventoryUpdateResult.newStock,
+              alertThreshold,
+              location: output.location || (lagerOrt === "aussen" ? "Außenlager" : "Innenlager"),
+            }, logger);
+          } catch (alertError) {
+            logger?.error({ error: alertError }, "Fehler beim Schreiben der Bestandswarnung");
+            // Nicht abbrechen - Haupttransaktion war erfolgreich
+          }
         }
       }
     }
@@ -797,6 +945,7 @@ export async function createExcelClientFromEnv(logger?: Logger): Promise<{
     filePath,
     inventoryWorksheetName: process.env.EXCEL_INVENTORY_WORKSHEET || "Lagerliste",
     transactionsWorksheetName: process.env.EXCEL_TRANSACTIONS_WORKSHEET || "Transaktionen",
+    alertsWorksheetName: process.env.EXCEL_ALERTS_WORKSHEET || "Bestandswarnungen",
     openaiApiKey: process.env.OPENAI_API_KEY, // Für intelligente Artikelsuche
   };
   
