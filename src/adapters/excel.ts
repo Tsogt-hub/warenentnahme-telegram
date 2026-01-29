@@ -628,9 +628,30 @@ async function writeTransaction(
 }
 
 /**
+ * Berechnet die Kalenderwoche (ISO 8601)
+ */
+function getWeekNumber(date: Date): { year: number; week: number } {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  return { year: d.getUTCFullYear(), week: weekNo };
+}
+
+/**
+ * Formatiert Kalenderwoche als String
+ */
+function formatWeek(date: Date): string {
+  const { year, week } = getWeekNumber(date);
+  return `KW ${week}/${year}`;
+}
+
+/**
  * Schreibt Bestandswarnung in Excel (separater Tab)
  * - Prüft ob Artikel bereits in der Liste ist (verhindert Duplikate)
  * - Erstellt Header falls Tab neu ist
+ * - Trennt wochenweise mit Leerzeilen
  */
 async function writeStockAlert(
   client: Client,
@@ -726,6 +747,50 @@ async function writeStockAlert(
       }
     }
 
+    // Prüfe ob wir eine neue Woche haben und Trennzeile einfügen müssen
+    const now = new Date();
+    const currentWeek = formatWeek(now);
+    let needsWeekSeparator = false;
+    
+    // Finde die letzte nicht-leere Zeile
+    for (let i = existingRows.length - 1; i >= 1; i--) {
+      const row = existingRows[i];
+      if (!row || !row[0]) continue; // Leere Zeile überspringen
+      
+      // Prüfe Zeitstempel der letzten Zeile
+      const lastTimestamp = String(row[0] || "");
+      if (lastTimestamp && !lastTimestamp.startsWith("---")) {
+        // Parse deutsches Datum (DD.MM.YYYY, HH:MM:SS)
+        const match = lastTimestamp.match(/(\d{2})\.(\d{2})\.(\d{4})/);
+        if (match) {
+          const lastDate = new Date(parseInt(match[3]), parseInt(match[2]) - 1, parseInt(match[1]));
+          const lastWeek = formatWeek(lastDate);
+          
+          if (lastWeek !== currentWeek) {
+            needsWeekSeparator = true;
+            logger?.info({ lastWeek, currentWeek }, "Neue Woche erkannt, füge Trennzeile ein");
+          }
+        }
+      }
+      break;
+    }
+
+    let nextRow = existingRows.length + 1;
+
+    // Füge Wochentrenner ein falls nötig
+    if (needsWeekSeparator) {
+      const separatorRow = [
+        `--- ${currentWeek} ---`,
+        "", "", "", "", "", "", "", ""
+      ];
+      await client
+        .api(`/users/${config.userPrincipalName}/drive/root:${config.filePath}:/workbook/worksheets('${worksheetName}')/range(address='A${nextRow}:I${nextRow}')`)
+        .patch({
+          values: [separatorRow],
+        });
+      nextRow++;
+    }
+
     // Neue Warnung eintragen
     const differenz = articleInfo.currentStock - articleInfo.alertThreshold;
     const newRow = [
@@ -740,18 +805,97 @@ async function writeStockAlert(
       articleInfo.location || "",
     ];
 
-    const nextRow = existingRows.length + 1;
     await client
       .api(`/users/${config.userPrincipalName}/drive/root:${config.filePath}:/workbook/worksheets('${worksheetName}')/range(address='A${nextRow}:I${nextRow}')`)
       .patch({
         values: [newRow],
       });
 
-    logger?.info({ article: articleInfo.bezeichnung, row: nextRow }, "Bestandswarnung hinzugefügt");
+    logger?.info({ article: articleInfo.bezeichnung, row: nextRow, week: currentWeek }, "Bestandswarnung hinzugefügt");
     return true;
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     logger?.error({ error: errorMsg }, "Fehler beim Schreiben der Bestandswarnung");
+    return false;
+  }
+}
+
+/**
+ * Markiert Bestandswarnung als erledigt wenn Bestand wieder über Meldebestand
+ */
+async function markAlertAsResolved(
+  client: Client,
+  config: ExcelConfig,
+  articleInfo: {
+    bezeichnung?: string;
+    sku?: string;
+    externeNr?: string;
+    newStock: number;
+    alertThreshold: number;
+  },
+  logger?: Logger
+): Promise<boolean> {
+  try {
+    const worksheetName = config.alertsWorksheetName || "Bestandswarnungen";
+    
+    // Prüfe ob Bestand wieder über Meldebestand
+    if (articleInfo.newStock <= articleInfo.alertThreshold) {
+      return false; // Noch unter Meldebestand
+    }
+
+    // Lade bestehende Zeilen
+    let existingRows: unknown[][] = [];
+    try {
+      const usedRange = await client
+        .api(`/users/${config.userPrincipalName}/drive/root:${config.filePath}:/workbook/worksheets('${worksheetName}')/usedRange`)
+        .get();
+      existingRows = usedRange.values || [];
+    } catch {
+      return false; // Worksheet existiert nicht
+    }
+
+    if (existingRows.length <= 1) return false;
+
+    // Suche offenen Eintrag für diesen Artikel
+    const searchTerm = (articleInfo.bezeichnung || articleInfo.sku || "").toLowerCase();
+    const skuSearch = (articleInfo.sku || "").toLowerCase();
+    const externeSearch = (articleInfo.externeNr || "").toLowerCase();
+    
+    for (let i = 1; i < existingRows.length; i++) {
+      const row = existingRows[i];
+      if (!row) continue;
+      
+      const rowArtikel = String(row[1] || "").toLowerCase();
+      const rowSkuIntern = String(row[2] || "").toLowerCase();
+      const rowSkuExtern = String(row[3] || "").toLowerCase();
+      const rowStatus = String(row[7] || "").toLowerCase();
+      
+      // Prüfe ob Match und noch offen
+      const isMatch = 
+        (searchTerm && rowArtikel.includes(searchTerm)) ||
+        (skuSearch && rowSkuIntern === skuSearch) ||
+        (externeSearch && rowSkuExtern === externeSearch);
+      
+      const isOpen = rowStatus.includes("offen") || rowStatus === "";
+      
+      if (isMatch && isOpen) {
+        // Aktualisiere Status auf "Erledigt" und neuen Bestand
+        const differenz = articleInfo.newStock - articleInfo.alertThreshold;
+        await client
+          .api(`/users/${config.userPrincipalName}/drive/root:${config.filePath}:/workbook/worksheets('${worksheetName}')/range(address='E${i + 1}:H${i + 1}')`)
+          .patch({
+            values: [[articleInfo.newStock, articleInfo.alertThreshold, differenz, "✅ Erledigt"]],
+          });
+        
+        logger?.info({ article: articleInfo.bezeichnung, row: i + 1, newStock: articleInfo.newStock }, "Bestandswarnung als erledigt markiert");
+        return true;
+      }
+    }
+
+    return false;
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    logger?.error({ error: errorMsg }, "Fehler beim Markieren der Bestandswarnung als erledigt");
     return false;
   }
 }
@@ -881,6 +1025,21 @@ export async function writeToExcel(
           } catch (alertError) {
             logger?.error({ error: alertError }, "Fehler beim Schreiben der Bestandswarnung");
             // Nicht abbrechen - Haupttransaktion war erfolgreich
+          }
+        } else if (output.action === "return" && inventoryUpdateResult.newStock !== undefined && inventoryUpdateResult.newStock > alertThreshold) {
+          // Bei Rückgabe: Prüfe ob Bestandswarnung als erledigt markiert werden kann
+          try {
+            const articleDetails = await readInventory(client, config, searchTerm, logger);
+            
+            await markAlertAsResolved(client, config, {
+              bezeichnung: articleDetails?.bezeichnung || output.item_name || undefined,
+              sku: articleDetails?.interneArtikelnummer || output.sku || undefined,
+              externeNr: articleDetails?.externeArtikelnummer || undefined,
+              newStock: inventoryUpdateResult.newStock,
+              alertThreshold,
+            }, logger);
+          } catch (resolveError) {
+            logger?.error({ error: resolveError }, "Fehler beim Markieren der Bestandswarnung als erledigt");
           }
         }
       }
